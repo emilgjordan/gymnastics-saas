@@ -21,3 +21,8 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Downloaded FIG PDFs and intermediate extraction output
+scripts/cop/*.pdf
+scripts/cop/*.json
+scripts/cop/__pycache__
