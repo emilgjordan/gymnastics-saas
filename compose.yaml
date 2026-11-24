@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres
+    image: postgres:17
     restart: always
     ports:
       - 5432:5432
@@ -9,6 +9,21 @@ services:
       POSTGRES_PASSWORD: mysecretpassword
       POSTGRES_DB: local
     volumes:
-      - pgdata:/var/lib/postgresql
+      - pgdata:/var/lib/postgresql/data
+
+  # Production-like app container: `docker compose --profile app up --build`
+  app:
+    profiles: [app]
+    build: .
+    depends_on: [db]
+    ports:
+      - 3000:3000
+    environment:
+      DATABASE_URL: postgres://root:mysecretpassword@db:5432/local
+      ORIGIN: http://localhost:3000
+      BETTER_AUTH_SECRET: change-me-to-a-long-random-string-in-production
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+
 volumes:
   pgdata:

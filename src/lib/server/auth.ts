@@ -5,17 +5,21 @@ import { env } from '$env/dynamic/private';
 import { getRequestEvent } from '$app/server';
 import { db } from '$lib/server/db';
 
+export const githubEnabled = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
+
 export const auth = betterAuth({
 	baseURL: env.ORIGIN,
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'pg' }),
-	emailAndPassword: { enabled: true },
-	socialProviders: {
-		github: {
-			clientId: env.GITHUB_CLIENT_ID,
-			clientSecret: env.GITHUB_CLIENT_SECRET
-		}
-	},
+	emailAndPassword: { enabled: true, minPasswordLength: 8 },
+	socialProviders: githubEnabled
+		? {
+				github: {
+					clientId: env.GITHUB_CLIENT_ID!,
+					clientSecret: env.GITHUB_CLIENT_SECRET!
+				}
+			}
+		: {},
 	plugins: [
 		sveltekitCookies(getRequestEvent) // make sure this is the last plugin in the array
 	]
