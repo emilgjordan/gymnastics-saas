@@ -25,6 +25,10 @@ Built with SvelteKit (Svelte 5), Tailwind CSS 4, Drizzle ORM + PostgreSQL and Be
   - owners create coach/owner invite links on _Coaches & staff_;
   - coaches create a personal login link for an athlete from the athlete's page.
 - **Dashboard** – stats, ready-to-move-up list, team progress, recent activity.
+- **Skill library** – all ~1,300 elements from the FIG Code of Points 2025–2028 (men's and
+  women's, every apparatus) with element group and difficulty value (vault: D-score). Search,
+  filter by value or group, and (owners) add selected skills to any level. Data lives in
+  `src/lib/server/cop/`; see `scripts/cop/README.md` to regenerate it.
 
 ## Getting started (local development)
 

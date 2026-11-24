@@ -37,7 +37,8 @@
 
 <h1 class="page-title">Curriculum</h1>
 <p class="mt-1 muted">
-	The levels, events and skills your athletes work through.
+	The levels, events and skills your athletes work through. Need elite skills? Browse the
+	<a href="/g/{data.gym.id}/library" class="text-indigo-600 hover:underline">FIG skill library</a>.
 	{#if !canEdit}Only gym owners can edit the curriculum.{/if}
 </p>
 
