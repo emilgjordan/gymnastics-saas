@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import Logo from '$lib/components/Logo.svelte';
 
 	let { data, children } = $props();
@@ -37,7 +37,8 @@
 	};
 
 	function active(item: { href: string; exact?: boolean }) {
-		const p = page.url.pathname;
+		// Highlight the destination as soon as a navigation starts, not when it finishes.
+		const p = navigating.to?.url.pathname ?? page.url.pathname;
 		return item.exact ? p === item.href : p === item.href || p.startsWith(item.href + '/');
 	}
 
@@ -77,10 +78,11 @@
 				{data.gym.name}
 			</p>
 		</div>
-		<nav class="flex-1 space-y-0.5 px-3 pb-4">
+		<nav class="flex-1 space-y-0.5 px-3 pb-4" data-sveltekit-preload-code="eager">
 			{#each nav as item (item.href)}
 				<a
 					href={item.href}
+					aria-current={active(item) ? 'page' : undefined}
 					class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium {active(item)
 						? 'bg-indigo-50 text-indigo-700'
 						: 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}"

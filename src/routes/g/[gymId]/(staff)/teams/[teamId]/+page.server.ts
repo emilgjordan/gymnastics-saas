@@ -5,7 +5,7 @@ import { athlete, member, team, teamCoach, user } from '$lib/server/db/schema';
 import {
 	getAthleteInGym,
 	getCurriculum,
-	getStatusesFor,
+	getStatusesForGym,
 	levelProgressFor,
 	setSkillStatus
 } from '$lib/server/athletes';
@@ -24,31 +24,43 @@ async function getTeam(gymId: string, teamId: string) {
 }
 
 export const load: PageServerLoad = async ({ params }) => {
-	const t = await getTeam(params.gymId, params.teamId);
-	const [athletes, coaches, staffMembers, others, curriculum] = await Promise.all([
-		db.select().from(athlete).where(eq(athlete.teamId, t.id)).orderBy(asc(athlete.name)),
+	// Start the heavy queries right away; only the (cheap) team lookup blocks navigation,
+	// so a bad id still produces a real 404.
+	const view = loadTeamView(params.gymId, params.teamId);
+	const t = await getTeam(params.gymId, params.teamId).catch((e) => {
+		view.catch(() => {});
+		throw e;
+	});
+	return { team: t, view };
+};
+
+async function loadTeamView(gymId: string, teamId: string) {
+	const [athletes, coaches, staffMembers, others, curriculum, statusMap] = await Promise.all([
+		db
+			.select({ id: athlete.id, name: athlete.name, levelId: athlete.levelId })
+			.from(athlete)
+			.where(and(eq(athlete.teamId, teamId), eq(athlete.gymId, gymId)))
+			.orderBy(asc(athlete.name)),
 		db
 			.select({ memberId: member.id, name: user.name, email: user.email })
 			.from(teamCoach)
 			.innerJoin(member, eq(member.id, teamCoach.memberId))
 			.innerJoin(user, eq(user.id, member.userId))
-			.where(eq(teamCoach.teamId, t.id)),
+			.where(and(eq(teamCoach.teamId, teamId), eq(member.gymId, gymId))),
 		db
 			.select({ memberId: member.id, name: user.name })
 			.from(member)
 			.innerJoin(user, eq(user.id, member.userId))
-			.where(and(eq(member.gymId, params.gymId), ne(member.role, 'student')))
+			.where(and(eq(member.gymId, gymId), ne(member.role, 'student')))
 			.orderBy(asc(user.name)),
 		db
 			.select({ id: athlete.id, name: athlete.name })
 			.from(athlete)
-			.where(
-				and(eq(athlete.gymId, params.gymId), or(isNull(athlete.teamId), ne(athlete.teamId, t.id)))
-			)
+			.where(and(eq(athlete.gymId, gymId), or(isNull(athlete.teamId), ne(athlete.teamId, teamId))))
 			.orderBy(asc(athlete.name)),
-		getCurriculum(params.gymId)
+		getCurriculum(gymId),
+		getStatusesForGym(gymId, { teamId })
 	]);
-	const statusMap = await getStatusesFor(athletes.map((a) => a.id));
 	const statuses: Record<string, Record<string, string>> = {};
 	for (const [aid, m] of statusMap) statuses[aid] = Object.fromEntries(m);
 
@@ -59,11 +71,8 @@ export const load: PageServerLoad = async ({ params }) => {
 		[...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? curriculum.levels[0]?.id ?? null;
 
 	return {
-		team: t,
 		athletes: athletes.map((a) => ({
-			id: a.id,
-			name: a.name,
-			levelId: a.levelId,
+			...a,
 			progress: levelProgressFor(a, curriculum, statusMap)
 		})),
 		coaches,
@@ -73,7 +82,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		statuses,
 		defaultLevelId
 	};
-};
+}
 
 async function ctx(event: RequestEvent) {
 	const s = staff(event);

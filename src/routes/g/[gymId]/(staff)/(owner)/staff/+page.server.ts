@@ -7,8 +7,11 @@ import { owner } from '$lib/server/guards';
 import { str } from '$lib/server/util';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ params, url }) => {
-	const gymId = params.gymId;
+export const load: PageServerLoad = ({ params, url }) => ({
+	people: loadPeople(params.gymId, url.origin)
+});
+
+async function loadPeople(gymId: string, origin: string) {
 	const [members, invites, linked] = await Promise.all([
 		db
 			.select({
@@ -50,9 +53,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		students: members
 			.filter((m) => m.role === 'student')
 			.map((m) => ({ ...m, athletes: linked.filter((a) => a.userId === m.userId) })),
-		invites: invites.map((i) => ({ ...i, url: `${url.origin}/invite/${i.token}` }))
+		invites: invites.map((i) => ({ ...i, url: `${origin}/invite/${i.token}` }))
 	};
-};
+}
 
 async function ownerCount(gymId: string) {
 	return (

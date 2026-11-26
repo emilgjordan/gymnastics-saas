@@ -6,17 +6,23 @@ import { summarize, type SkillStatus } from '$lib/progress';
 export async function getCurriculum(gymId: string) {
 	const [levels, events, skills] = await Promise.all([
 		db
-			.select()
+			.select({ id: level.id, name: level.name })
 			.from(level)
 			.where(eq(level.gymId, gymId))
 			.orderBy(asc(level.sortOrder), asc(level.name)),
 		db
-			.select()
+			.select({ id: apparatus.id, name: apparatus.name })
 			.from(apparatus)
 			.where(eq(apparatus.gymId, gymId))
 			.orderBy(asc(apparatus.sortOrder), asc(apparatus.name)),
 		db
-			.select()
+			.select({
+				id: skill.id,
+				name: skill.name,
+				description: skill.description,
+				levelId: skill.levelId,
+				apparatusId: skill.apparatusId
+			})
 			.from(skill)
 			.where(eq(skill.gymId, gymId))
 			.orderBy(asc(skill.sortOrder), asc(skill.name))
@@ -32,10 +38,21 @@ export async function getAthleteSkills(athleteId: string) {
 	return new Map(rows.map((r) => [r.skillId, r]));
 }
 
+type StatusRow = { athleteId: string; skillId: string; status: SkillStatus };
+
+function toStatusMap(rows: StatusRow[]) {
+	const map = new Map<string, Map<string, SkillStatus>>();
+	for (const r of rows) {
+		let m = map.get(r.athleteId);
+		if (!m) map.set(r.athleteId, (m = new Map()));
+		m.set(r.skillId, r.status);
+	}
+	return map;
+}
+
 /** Map athleteId -> (skillId -> status) for many athletes. */
 export async function getStatusesFor(athleteIds: string[]) {
-	const map = new Map<string, Map<string, SkillStatus>>();
-	if (!athleteIds.length) return map;
+	if (!athleteIds.length) return new Map<string, Map<string, SkillStatus>>();
 	const rows = await db
 		.select({
 			athleteId: athleteSkill.athleteId,
@@ -44,11 +61,26 @@ export async function getStatusesFor(athleteIds: string[]) {
 		})
 		.from(athleteSkill)
 		.where(inArray(athleteSkill.athleteId, athleteIds));
-	for (const r of rows) {
-		if (!map.has(r.athleteId)) map.set(r.athleteId, new Map());
-		map.get(r.athleteId)!.set(r.skillId, r.status);
-	}
-	return map;
+	return toStatusMap(rows);
+}
+
+/**
+ * Same as getStatusesFor, but scoped by gym (and optionally team) via a join, so it
+ * can run in parallel with the athlete query instead of waiting for its ids.
+ */
+export async function getStatusesForGym(gymId: string, opts: { teamId?: string } = {}) {
+	const rows = await db
+		.select({
+			athleteId: athleteSkill.athleteId,
+			skillId: athleteSkill.skillId,
+			status: athleteSkill.status
+		})
+		.from(athleteSkill)
+		.innerJoin(athlete, eq(athlete.id, athleteSkill.athleteId))
+		.where(
+			and(eq(athlete.gymId, gymId), opts.teamId ? eq(athlete.teamId, opts.teamId) : undefined)
+		);
+	return toStatusMap(rows);
 }
 
 /** Progress of each athlete through their *current* level, plus the next level. */

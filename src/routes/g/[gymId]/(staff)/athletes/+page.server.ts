@@ -1,24 +1,25 @@
 import { fail } from '@sveltejs/kit';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { athlete, team } from '$lib/server/db/schema';
-import { getCurriculum, getStatusesFor, levelProgressFor } from '$lib/server/athletes';
+import { getCurriculum, getStatusesForGym, levelProgressFor } from '$lib/server/athletes';
 import { staff } from '$lib/server/guards';
 import { str } from '$lib/server/util';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ params }) => {
-	const gymId = params.gymId;
-	const [rows, teams, curriculum] = await Promise.all([
+export const load: PageServerLoad = ({ params }) => ({ list: loadAthletes(params.gymId) });
+
+async function loadAthletes(gymId: string) {
+	const [rows, teams, curriculum, statuses] = await Promise.all([
 		db.select().from(athlete).where(eq(athlete.gymId, gymId)).orderBy(asc(athlete.name)),
 		db
 			.select({ id: team.id, name: team.name })
 			.from(team)
 			.where(eq(team.gymId, gymId))
 			.orderBy(asc(team.name)),
-		getCurriculum(gymId)
+		getCurriculum(gymId),
+		getStatusesForGym(gymId)
 	]);
-	const statuses = await getStatusesFor(rows.map((r) => r.id));
 	return {
 		teams,
 		levels: curriculum.levels.map((l) => ({ id: l.id, name: l.name })),
@@ -32,11 +33,13 @@ export const load: PageServerLoad = async ({ params }) => {
 			progress: levelProgressFor(a, curriculum, statuses)
 		}))
 	};
-};
+}
 
 async function validRefs(gymId: string, teamId: string, levelId: string) {
-	const curriculum = await getCurriculum(gymId);
-	const teams = await db.select({ id: team.id }).from(team).where(eq(team.gymId, gymId));
+	const [curriculum, teams] = await Promise.all([
+		getCurriculum(gymId),
+		db.select({ id: team.id }).from(team).where(eq(team.gymId, gymId))
+	]);
 	return {
 		teamId: teams.some((t) => t.id === teamId) ? teamId : null,
 		levelId: curriculum.levels.some((l) => l.id === levelId) ? levelId : null
@@ -72,12 +75,10 @@ export const actions: Actions = {
 					? { levelId: refs.levelId }
 					: null;
 		if (!set) return fail(400, { message: 'Unknown field' });
-		for (const id of ids) {
-			await db
-				.update(athlete)
-				.set(set)
-				.where(and(eq(athlete.id, id), eq(athlete.gymId, gymId)));
-		}
+		await db
+			.update(athlete)
+			.set(set)
+			.where(and(inArray(athlete.id, ids), eq(athlete.gymId, gymId)));
 		return { updated: ids.length };
 	}
 };

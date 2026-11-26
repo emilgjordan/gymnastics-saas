@@ -19,6 +19,9 @@ export const auth = betterAuth({
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'pg' }),
 	emailAndPassword: { enabled: true, minPasswordLength: 8 },
+	// Cache the session in a signed cookie so most requests (including hover
+	// preloads) don't need a database round-trip to resolve the user.
+	session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
 	socialProviders: githubEnabled
 		? {
 				github: {

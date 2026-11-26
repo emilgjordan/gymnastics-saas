@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import { submit } from '$lib/forms';
 	import ProgressBar from './ProgressBar.svelte';
 	import StatusBadge from './StatusBadge.svelte';
 	import { statusLabel, statusOrder, summarize, type SkillStatus } from '$lib/progress';
@@ -21,7 +23,8 @@
 		skills,
 		statuses,
 		currentLevelId,
-		editable = false
+		editable = false,
+		onStatus
 	}: {
 		levels: Lvl[];
 		events: Ev[];
@@ -29,6 +32,8 @@
 		statuses: Record<string, St>;
 		currentLevelId: string | null;
 		editable?: boolean;
+		/** Optimistic handler for status buttons; falls back to a plain reload when omitted. */
+		onStatus?: (skillId: string) => SubmitFunction;
 	} = $props();
 
 	// svelte-ignore state_referenced_locally
@@ -38,14 +43,11 @@
 
 	const statusOf = (id: string): SkillStatus => statuses[id]?.status ?? 'not_started';
 
-	const perLevel = $derived(
-		Object.fromEntries(
-			levels.map((l) => [
-				l.id,
-				summarize(skills.filter((s) => s.levelId === l.id).map((s) => statusOf(s.id)))
-			])
-		)
-	);
+	const perLevel = $derived.by(() => {
+		const byLevel: Record<string, SkillStatus[]> = {};
+		for (const s of skills) (byLevel[s.levelId] ??= []).push(statusOf(s.id));
+		return Object.fromEntries(levels.map((l) => [l.id, summarize(byLevel[l.id] ?? [])]));
+	});
 
 	const groups = $derived(
 		events
@@ -140,9 +142,7 @@
 									<form
 										method="POST"
 										action="?/setStatus"
-										use:enhance={() =>
-											async ({ update }) =>
-												update({ reset: false, invalidateAll: true })}
+										use:enhance={onStatus ? onStatus(s.id) : submit({ reset: false })}
 									>
 										<input type="hidden" name="skillId" value={s.id} />
 										<div
@@ -178,11 +178,11 @@
 									method="POST"
 									action="?/setNote"
 									class="mt-2 flex gap-2"
-									use:enhance={() =>
-										async ({ update }) => {
-											await update({ reset: false });
-											editingNote = null;
-										}}
+									use:enhance={submit({
+										reset: false,
+										success: 'Note saved',
+										onSuccess: () => (editingNote = null)
+									})}
 								>
 									<input type="hidden" name="skillId" value={s.id} />
 									<!-- svelte-ignore a11y_autofocus -->

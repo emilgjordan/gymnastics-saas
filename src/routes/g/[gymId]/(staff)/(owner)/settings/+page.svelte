@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import FormError from '$lib/components/FormError.svelte';
+	import { submit } from '$lib/forms';
 	let { data, form } = $props();
 </script>
 
@@ -11,9 +12,7 @@
 <form
 	method="POST"
 	action="?/rename"
-	use:enhance={() =>
-		async ({ update }) =>
-			update({ reset: false })}
+	use:enhance={submit({ reset: false, success: 'Gym name saved' })}
 	class="mt-6 max-w-xl space-y-4 card p-6"
 >
 	<h2 class="font-semibold">General</h2>
@@ -23,7 +22,6 @@
 		<input class="input" id="name" name="name" value={data.gym.name} required />
 	</div>
 	<div class="flex items-center justify-end gap-3">
-		{#if form?.saved}<span class="text-sm text-emerald-700">Saved</span>{/if}
 		<button class="btn-primary">Save</button>
 	</div>
 </form>
