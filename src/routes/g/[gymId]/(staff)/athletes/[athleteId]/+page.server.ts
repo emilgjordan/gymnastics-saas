@@ -1,7 +1,7 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { and, asc, eq, isNull, gt } from 'drizzle-orm';
 import { db } from '$lib/server/db';
-import { athlete, invite, member, team, user } from '$lib/server/db/schema';
+import { athlete, invite, level, member, team, user } from '$lib/server/db/schema';
 import {
 	getAthleteInGym,
 	getAthleteSkills,
@@ -12,45 +12,37 @@ import { recentActivity } from '$lib/server/activity';
 import { createInvite } from '$lib/server/invites';
 import { staff } from '$lib/server/guards';
 import { str } from '$lib/server/util';
-import { isStatus, summarize } from '$lib/progress';
+import { isStatus } from '$lib/progress';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, url }) => {
-	const a = await getAthleteInGym(params.gymId, params.athleteId);
-	if (!a) error(404, 'Athlete not found');
-
-	const [curriculum, st, teams, activity, linked, openInvite] = await Promise.all([
-		getCurriculum(params.gymId),
-		getAthleteSkills(a.id),
-		db
-			.select({ id: team.id, name: team.name })
-			.from(team)
-			.where(eq(team.gymId, params.gymId))
-			.orderBy(asc(team.name)),
-		recentActivity(params.gymId, { athleteId: a.id, limit: 20 }),
-		a.userId
-			? db.select({ email: user.email, name: user.name }).from(user).where(eq(user.id, a.userId))
-			: Promise.resolve([]),
-		db
-			.select({ token: invite.token, expiresAt: invite.expiresAt })
-			.from(invite)
-			.where(
-				and(eq(invite.athleteId, a.id), isNull(invite.usedAt), gt(invite.expiresAt, new Date()))
-			)
-			.limit(1)
-	]);
-
-	const statuses = Object.fromEntries(
-		[...st].map(([k, v]) => [k, { status: v.status, note: v.note, masteredAt: v.masteredAt }])
-	);
-	const idx = curriculum.levels.findIndex((l) => l.id === a.levelId);
-	const nextLevel = idx >= 0 ? (curriculum.levels[idx + 1] ?? null) : null;
-	const current = summarize(
-		curriculum.skills
-			.filter((s) => s.levelId === a.levelId)
-			.map((s) => statuses[s.id]?.status ?? 'not_started')
-	);
-
+	const { gymId, athleteId } = params;
+	// Header data (name, team, level) blocks navigation so a bad id still 404s;
+	// everything else streams in behind a skeleton.
+	const headerP = db
+		.select({
+			id: athlete.id,
+			name: athlete.name,
+			birthYear: athlete.birthYear,
+			teamId: athlete.teamId,
+			levelId: athlete.levelId,
+			notes: athlete.notes,
+			userId: athlete.userId,
+			teamName: team.name,
+			levelName: level.name
+		})
+		.from(athlete)
+		.leftJoin(team, eq(team.id, athlete.teamId))
+		.leftJoin(level, eq(level.id, athlete.levelId))
+		.where(and(eq(athlete.id, athleteId), eq(athlete.gymId, gymId)))
+		.limit(1)
+		.then((r) => r[0] ?? null);
+	const view = loadAthleteView(gymId, athleteId, headerP, url.origin);
+	const a = await headerP;
+	if (!a) {
+		view.catch(() => {});
+		error(404, 'Athlete not found');
+	}
 	return {
 		athlete: {
 			id: a.id,
@@ -58,18 +50,64 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			birthYear: a.birthYear,
 			teamId: a.teamId,
 			levelId: a.levelId,
-			notes: a.notes
+			notes: a.notes,
+			teamName: a.teamName,
+			levelName: a.levelName
 		},
+		view
+	};
+};
+
+async function loadAthleteView(
+	gymId: string,
+	athleteId: string,
+	headerP: Promise<{ userId: string | null; levelId: string | null } | null>,
+	origin: string
+) {
+	const [curriculum, st, teams, activity, linked, openInvite] = await Promise.all([
+		getCurriculum(gymId),
+		getAthleteSkills(athleteId),
+		db
+			.select({ id: team.id, name: team.name })
+			.from(team)
+			.where(eq(team.gymId, gymId))
+			.orderBy(asc(team.name)),
+		recentActivity(gymId, { athleteId, limit: 20 }),
+		headerP.then((a) =>
+			a?.userId
+				? db.select({ email: user.email, name: user.name }).from(user).where(eq(user.id, a.userId))
+				: []
+		),
+		db
+			.select({ token: invite.token, expiresAt: invite.expiresAt })
+			.from(invite)
+			.where(
+				and(
+					eq(invite.athleteId, athleteId),
+					isNull(invite.usedAt),
+					gt(invite.expiresAt, new Date())
+				)
+			)
+			.limit(1)
+	]);
+	const a = await headerP;
+
+	const statuses = Object.fromEntries(
+		[...st].map(([k, v]) => [k, { status: v.status, note: v.note, masteredAt: v.masteredAt }])
+	);
+	const idx = curriculum.levels.findIndex((l) => l.id === a?.levelId);
+	const nextLevel = idx >= 0 ? (curriculum.levels[idx + 1] ?? null) : null;
+
+	return {
 		curriculum,
 		statuses,
 		teams,
 		activity,
 		login: linked[0] ?? null,
-		inviteUrl: openInvite[0] ? `${url.origin}/invite/${openInvite[0].token}` : null,
-		current,
+		inviteUrl: openInvite[0] ? `${origin}/invite/${openInvite[0].token}` : null,
 		nextLevel
 	};
-};
+}
 
 async function load404(event: Parameters<Actions[string]>[0]) {
 	const s = staff(event);
@@ -113,8 +151,10 @@ export const actions: Actions = {
 		const form = await event.request.formData();
 		const name = str(form, 'name');
 		if (!name) return fail(400, { message: 'Name is required' });
-		const curriculum = await getCurriculum(gymId);
-		const teams = await db.select({ id: team.id }).from(team).where(eq(team.gymId, gymId));
+		const [curriculum, teams] = await Promise.all([
+			getCurriculum(gymId),
+			db.select({ id: team.id }).from(team).where(eq(team.gymId, gymId))
+		]);
 		const teamId = str(form, 'teamId');
 		const levelId = str(form, 'levelId');
 		await db

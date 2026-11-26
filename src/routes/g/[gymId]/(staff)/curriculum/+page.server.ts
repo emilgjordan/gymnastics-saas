@@ -7,8 +7,8 @@ import { owner } from '$lib/server/guards';
 import { str } from '$lib/server/util';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ params }) => ({
-	curriculum: await getCurriculum(params.gymId)
+export const load: PageServerLoad = ({ params }) => ({
+	curriculum: getCurriculum(params.gymId)
 });
 
 const kinds = { level, event: apparatus, skill } as const;

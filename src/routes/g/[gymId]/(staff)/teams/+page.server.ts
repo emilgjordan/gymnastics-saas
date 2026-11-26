@@ -2,14 +2,15 @@ import { fail, redirect } from '@sveltejs/kit';
 import { asc, eq } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { athlete, member, team, teamCoach, user } from '$lib/server/db/schema';
-import { getCurriculum, getStatusesFor, levelProgressFor } from '$lib/server/athletes';
+import { getCurriculum, getStatusesForGym, levelProgressFor } from '$lib/server/athletes';
 import { staff } from '$lib/server/guards';
 import { str } from '$lib/server/util';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ params }) => {
-	const gymId = params.gymId;
-	const [teams, athletes, coaches, curriculum] = await Promise.all([
+export const load: PageServerLoad = ({ params }) => ({ teams: loadTeams(params.gymId) });
+
+async function loadTeams(gymId: string) {
+	const [teams, athletes, coaches, curriculum, statuses] = await Promise.all([
 		db.select().from(team).where(eq(team.gymId, gymId)).orderBy(asc(team.name)),
 		db
 			.select({ id: athlete.id, teamId: athlete.teamId, levelId: athlete.levelId })
@@ -21,25 +22,23 @@ export const load: PageServerLoad = async ({ params }) => {
 			.innerJoin(member, eq(member.id, teamCoach.memberId))
 			.innerJoin(user, eq(user.id, member.userId))
 			.where(eq(member.gymId, gymId)),
-		getCurriculum(gymId)
+		getCurriculum(gymId),
+		getStatusesForGym(gymId)
 	]);
-	const statuses = await getStatusesFor(athletes.map((a) => a.id));
-	return {
-		teams: teams.map((t) => {
-			const members = athletes.filter((a) => a.teamId === t.id);
-			const progs = members
-				.map((a) => levelProgressFor(a, curriculum, statuses))
-				.filter((p) => p !== null);
-			return {
-				...t,
-				athleteCount: members.length,
-				coaches: coaches.filter((c) => c.teamId === t.id).map((c) => c.name),
-				avg: progs.length ? Math.round(progs.reduce((s, p) => s + p.percent, 0) / progs.length) : 0,
-				ready: progs.filter((p) => p.readyToMoveUp).length
-			};
-		})
-	};
-};
+	return teams.map((t) => {
+		const members = athletes.filter((a) => a.teamId === t.id);
+		const progs = members
+			.map((a) => levelProgressFor(a, curriculum, statuses))
+			.filter((p) => p !== null);
+		return {
+			...t,
+			athleteCount: members.length,
+			coaches: coaches.filter((c) => c.teamId === t.id).map((c) => c.name),
+			avg: progs.length ? Math.round(progs.reduce((s, p) => s + p.percent, 0) / progs.length) : 0,
+			ready: progs.filter((p) => p.readyToMoveUp).length
+		};
+	});
+}
 
 export const actions: Actions = {
 	create: async (event) => {

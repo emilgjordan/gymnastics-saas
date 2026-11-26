@@ -1,32 +1,56 @@
 import { redirect } from '@sveltejs/kit';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '$lib/server/db';
-import { athlete, team } from '$lib/server/db/schema';
-import { getAthleteSkills, getCurriculum } from '$lib/server/athletes';
+import { athlete, athleteSkill, team } from '$lib/server/db/schema';
+import { getCurriculum } from '$lib/server/athletes';
 import { recentActivity } from '$lib/server/activity';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ locals, params }) => {
+export const load: PageServerLoad = ({ locals, params }) => {
 	if (locals.membership!.role !== 'student') redirect(303, `/g/${params.gymId}`);
+	return { me: loadMe(params.gymId, locals.user!.id) };
+};
 
-	const profiles = await db
-		.select({ a: athlete, teamName: team.name })
+async function loadMe(gymId: string, userId: string) {
+	const profilesP = db
+		.select({
+			id: athlete.id,
+			name: athlete.name,
+			levelId: athlete.levelId,
+			teamName: team.name
+		})
 		.from(athlete)
 		.leftJoin(team, eq(team.id, athlete.teamId))
-		.where(and(eq(athlete.gymId, params.gymId), eq(athlete.userId, locals.user!.id)));
+		.where(and(eq(athlete.gymId, gymId), eq(athlete.userId, userId)));
 
-	const curriculum = await getCurriculum(params.gymId);
-	const result = await Promise.all(
-		profiles.map(async ({ a, teamName }) => {
-			const st = await getAthleteSkills(a.id);
-			return {
-				athlete: { id: a.id, name: a.name, levelId: a.levelId, teamName },
-				statuses: Object.fromEntries(
-					[...st].map(([k, v]) => [k, { status: v.status, note: v.note, masteredAt: v.masteredAt }])
-				),
-				activity: await recentActivity(params.gymId, { athleteId: a.id, limit: 10 })
-			};
-		})
-	);
-	return { curriculum, profiles: result };
-};
+	const [curriculum, profiles] = await Promise.all([getCurriculum(gymId), profilesP]);
+	const ids = profiles.map((p) => p.id);
+	const [skillRows, activities] = await Promise.all([
+		ids.length
+			? db
+					.select({
+						athleteId: athleteSkill.athleteId,
+						skillId: athleteSkill.skillId,
+						status: athleteSkill.status,
+						note: athleteSkill.note,
+						masteredAt: athleteSkill.masteredAt
+					})
+					.from(athleteSkill)
+					.where(inArray(athleteSkill.athleteId, ids))
+			: [],
+		Promise.all(ids.map((id) => recentActivity(gymId, { athleteId: id, limit: 10 })))
+	]);
+
+	return {
+		curriculum,
+		profiles: profiles.map((a, i) => ({
+			athlete: a,
+			statuses: Object.fromEntries(
+				skillRows
+					.filter((r) => r.athleteId === a.id)
+					.map((r) => [r.skillId, { status: r.status, note: r.note, masteredAt: r.masteredAt }])
+			),
+			activity: activities[i]
+		}))
+	};
+}

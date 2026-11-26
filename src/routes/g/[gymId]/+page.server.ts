@@ -2,15 +2,18 @@ import { redirect } from '@sveltejs/kit';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { athlete, member, team, teamCoach } from '$lib/server/db/schema';
-import { getCurriculum, getStatusesFor, levelProgressFor } from '$lib/server/athletes';
+import { getCurriculum, getStatusesForGym, levelProgressFor } from '$lib/server/athletes';
 import { masteredSince, recentActivity } from '$lib/server/activity';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ locals, params }) => {
+export const load: PageServerLoad = ({ locals, params }) => {
 	if (locals.membership!.role === 'student') redirect(303, `/g/${params.gymId}/me`);
-	const gymId = params.gymId;
+	// Streamed: navigation commits immediately and the page shows a skeleton until this resolves.
+	return { dashboard: loadDashboard(params.gymId, locals.membership!.id) };
+};
 
-	const [athletes, teams, coachCount, curriculum, activity, mastered30, myTeamRows] =
+async function loadDashboard(gymId: string, memberId: string) {
+	const [athletes, teams, coachCount, curriculum, activity, mastered30, myTeamRows, statuses] =
 		await Promise.all([
 			db
 				.select({
@@ -36,10 +39,10 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 			db
 				.select({ teamId: teamCoach.teamId })
 				.from(teamCoach)
-				.where(eq(teamCoach.memberId, locals.membership!.id))
+				.where(eq(teamCoach.memberId, memberId)),
+			getStatusesForGym(gymId)
 		]);
 
-	const statuses = await getStatusesFor(athletes.map((a) => a.id));
 	const levelName = Object.fromEntries(curriculum.levels.map((l) => [l.id, l.name]));
 	const ready = athletes
 		.map((a) => ({ ...a, progress: levelProgressFor(a, curriculum, statuses) }))
@@ -77,4 +80,4 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		teams: teamSummaries,
 		unassigned: athletes.filter((a) => !a.levelId).length
 	};
-};
+}
