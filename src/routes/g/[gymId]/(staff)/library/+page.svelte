@@ -1,20 +1,47 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { navigating, page } from '$app/state';
 	import FormError from '$lib/components/FormError.svelte';
+	import Bone from '$lib/components/skeletons/Bone.svelte';
+	import { matchEvent } from '$lib/cop';
+	import { submit } from '$lib/forms';
+	import { latest } from '$lib/latest.svelte';
 
 	let { data, form } = $props();
 	const base = $derived(`/g/${data.gym.id}/library`);
 	const canEdit = $derived(data.role === 'owner');
 	const isVault = $derived(data.apparatus === 'Vault');
 
+	// Gym curriculum (levels/events/existing skills) streams in from the layout and is
+	// reused across tab switches; the element table never waits for it.
+	const cur = latest(() => data.libraryCurriculum);
+	const levels = $derived(cur.value?.v.levels ?? []);
+	const events = $derived(cur.value?.v.events ?? []);
+	const existing = $derived(new Set(cur.value?.v.existingKeys ?? []));
+	const suggestedEventId = $derived(matchEvent(events, data.apparatus)?.id ?? null);
+
+	// Tabs highlight immediately on click; the current table dims until the new one arrives.
+	const pendingUrl = $derived(
+		navigating.to?.url.pathname === page.url.pathname ? navigating.to.url : null
+	);
+	const shownDiscipline = $derived(
+		pendingUrl ? (pendingUrl.searchParams.get('d') === 'MAG' ? 'MAG' : 'WAG') : data.discipline
+	);
+	const shownApparatus = $derived(
+		pendingUrl
+			? (pendingUrl.searchParams.get('a') ??
+					(shownDiscipline === data.discipline ? data.apparatus : null))
+			: data.apparatus
+	);
+
 	let q = $state('');
 	let group = $state('');
 	let values = $state<string[]>([]);
 	let selected = $state<string[]>([]);
-	// svelte-ignore state_referenced_locally
-	let levelId = $state(data.levels[0]?.id ?? '');
-	// svelte-ignore state_referenced_locally
-	let eventId = $state(data.suggestedEventId ?? 'new');
+	let levelChoice = $state<string | null>(null);
+	let eventChoice = $state<string | null>(null);
+	const levelId = $derived(levelChoice ?? levels[0]?.id ?? '');
+	const eventId = $derived(eventChoice ?? suggestedEventId ?? 'new');
 
 	// reset filters/selection when switching apparatus
 	$effect(() => {
@@ -24,7 +51,7 @@
 		group = '';
 		values = [];
 		selected = [];
-		eventId = data.suggestedEventId ?? 'new';
+		eventChoice = null;
 	});
 
 	const groups = $derived(
@@ -35,21 +62,20 @@
 	const valueOptions = $derived(
 		isVault ? [] : [...new Set(data.elements.map((e) => e.value ?? ''))].filter(Boolean).sort()
 	);
-	const filtered = $derived(
-		data.elements.filter(
+	const filtered = $derived.by(() => {
+		const needle = q.trim().toLowerCase();
+		return data.elements.filter(
 			(e) =>
 				(!group || e.group === group) &&
 				(!values.length || values.includes(e.value ?? '')) &&
-				(!q ||
-					`${e.description} ${e.names.join(' ')} ${e.code}`.toLowerCase().includes(q.toLowerCase()))
-		)
-	);
-	const existing = $derived(new Set(data.existingKeys));
+				(!needle ||
+					`${e.description} ${e.names.join(' ')} ${e.code}`.toLowerCase().includes(needle))
+		);
+	});
 	const inCurriculum = (desc: string) =>
 		eventId !== 'new' && existing.has(`${levelId}|${eventId}|${desc.toLowerCase()}`);
-	const allSelected = $derived(
-		filtered.length > 0 && filtered.every((e) => selected.includes(e.id))
-	);
+	const selectedSet = $derived(new Set(selected));
+	const allSelected = $derived(filtered.length > 0 && filtered.every((e) => selectedSet.has(e.id)));
 
 	function toggleValue(v: string) {
 		values = values.includes(v) ? values.filter((x) => x !== v) : [...values, v];
@@ -87,7 +113,8 @@
 			<a
 				href="{base}?d={d}"
 				data-sveltekit-noscroll
-				class="rounded-md px-3 py-1.5 font-medium {data.discipline === d
+				aria-current={shownDiscipline === d ? 'page' : undefined}
+				class="rounded-md px-3 py-1.5 font-medium {shownDiscipline === d
 					? 'bg-white shadow-sm'
 					: 'text-slate-600'}">{label}</a
 			>
@@ -98,7 +125,8 @@
 			<a
 				href="{base}?d={data.discipline}&a={encodeURIComponent(a)}"
 				data-sveltekit-noscroll
-				class="rounded-full px-3.5 py-1.5 text-sm font-medium {data.apparatus === a
+				aria-current={shownApparatus === a ? 'page' : undefined}
+				class="rounded-full px-3.5 py-1.5 text-sm font-medium {shownApparatus === a
 					? 'bg-indigo-600 text-white'
 					: 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'}">{a}</a
 			>
@@ -140,41 +168,41 @@
 </div>
 
 {#if form?.message}<div class="mt-4"><FormError message={form.message} /></div>{/if}
-{#if form?.added !== undefined}
-	<p class="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-		Added {form.added} skill{form.added === 1 ? '' : 's'} to your curriculum{form.skipped
-			? ` (${form.skipped} already there)`
-			: ''}.
-	</p>
-{/if}
 
 {#if canEdit && selected.length}
 	<form
 		method="POST"
 		action="?/add"
 		class="sticky top-2 z-20 mt-4 flex flex-wrap items-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm text-white shadow-lg"
-		use:enhance={() =>
-			async ({ result, update }) => {
-				await update();
-				if (result.type === 'success') selected = [];
-			}}
+		use:enhance={submit({
+			reset: false,
+			success: (r) => {
+				if (r.type !== 'success') return;
+				const n = Number(r.data?.added ?? 0);
+				const skipped = Number(r.data?.skipped ?? 0);
+				return `Added ${n} skill${n === 1 ? '' : 's'}${skipped ? ` (${skipped} already there)` : ''}`;
+			},
+			onSuccess: () => (selected = [])
+		})}
 	>
 		{#each selected as id (id)}<input type="hidden" name="ids" value={id} />{/each}
 		<span class="font-medium">{selected.length} selected — add to</span>
-		{#if data.levels.length}
+		{#if !cur.value}
+			<Bone class="h-7 w-48 rounded-lg bg-indigo-400/60" />
+		{:else if levels.length}
 			<select
 				name="levelId"
-				bind:value={levelId}
+				bind:value={() => levelId, (v) => (levelChoice = v)}
 				class="input w-auto border-0 py-1 text-xs text-slate-900"
 			>
-				{#each data.levels as l (l.id)}<option value={l.id}>{l.name}</option>{/each}
+				{#each levels as l (l.id)}<option value={l.id}>{l.name}</option>{/each}
 			</select>
 			<select
 				name="eventId"
-				bind:value={eventId}
+				bind:value={() => eventId, (v) => (eventChoice = v)}
 				class="input w-auto border-0 py-1 text-xs text-slate-900"
 			>
-				{#each data.events as e (e.id)}<option value={e.id}>{e.name}</option>{/each}
+				{#each events as e (e.id)}<option value={e.id}>{e.name}</option>{/each}
 				<option value="new">+ New event “{data.apparatus}”</option>
 			</select>
 			<button class="btn bg-white btn-sm text-indigo-700 hover:bg-indigo-50"
@@ -195,7 +223,12 @@
 	</form>
 {/if}
 
-<div class="mt-4 overflow-x-auto card">
+<div
+	class="mt-4 overflow-x-auto card transition-opacity duration-150 {pendingUrl
+		? 'pointer-events-none opacity-50'
+		: ''}"
+	aria-busy={!!pendingUrl}
+>
 	<table class="w-full text-sm">
 		<thead
 			class="border-b border-slate-200 bg-slate-50/60 text-left text-xs font-medium text-slate-500"

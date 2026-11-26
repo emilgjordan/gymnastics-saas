@@ -25,21 +25,7 @@ export const copApparatus: Record<'MAG' | 'WAG', string[]> = {
 const byId = new Map(copElements.map((e) => [e.id, e]));
 export const getCopElement = (id: string) => byId.get(id);
 
-/** Find the gym event that best matches a Code of Points apparatus. */
-export function matchEvent<T extends { name: string }>(events: T[], apparatus: string) {
-	const patterns: Record<string, RegExp> = {
-		'Floor Exercise': /floor/i,
-		'Balance Beam': /beam/i,
-		'Uneven Bars': /uneven|^bars$/i,
-		Vault: /vault/i,
-		'Pommel Horse': /pommel/i,
-		Rings: /ring/i,
-		'Parallel Bars': /parallel|p-?bars/i,
-		'Horizontal Bar': /horizontal|high bar/i
-	};
-	const re = patterns[apparatus];
-	return (re && events.find((e) => re.test(e.name))) || null;
-}
+export { matchEvent } from '$lib/cop';
 
 export function valueLabel(e: Pick<CopElement, 'apparatus' | 'value'>) {
 	if (!e.value) return '';

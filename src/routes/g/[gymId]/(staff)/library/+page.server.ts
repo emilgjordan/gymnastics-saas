@@ -3,38 +3,22 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { apparatus as eventTable, level, skill } from '$lib/server/db/schema';
 import { getCurriculum } from '$lib/server/athletes';
-import {
-	copApparatus,
-	copElements,
-	copMeta,
-	getCopElement,
-	matchEvent,
-	valueLabel
-} from '$lib/server/cop';
+import { copApparatus, copElements, copMeta, getCopElement, valueLabel } from '$lib/server/cop';
 import { owner } from '$lib/server/guards';
 import { str } from '$lib/server/util';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ params, url }) => {
+// Pure in-memory filter: tab switches only pay for the request itself, no database work.
+export const load: PageServerLoad = ({ url }) => {
 	const discipline = url.searchParams.get('d') === 'MAG' ? 'MAG' : 'WAG';
 	const apps = copApparatus[discipline];
 	const app = apps.includes(url.searchParams.get('a') ?? '') ? url.searchParams.get('a')! : apps[0];
-	const { levels, events, skills } = await getCurriculum(params.gymId);
-	const suggested = matchEvent(events, app);
-	const existing = new Set(
-		skills.map((s) => `${s.levelId}|${s.apparatusId}|${s.name.toLowerCase()}`)
-	);
-
 	return {
 		discipline,
 		apparatus: app,
 		apparatusList: apps,
 		elements: copElements.filter((e) => e.discipline === discipline && e.apparatus === app),
-		source: copMeta.source,
-		levels: levels.map((l) => ({ id: l.id, name: l.name })),
-		events: events.map((e) => ({ id: e.id, name: e.name })),
-		suggestedEventId: suggested?.id ?? null,
-		existingKeys: [...existing]
+		source: copMeta.source
 	};
 };
 

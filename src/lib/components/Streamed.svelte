@@ -1,6 +1,7 @@
 <script lang="ts" generics="T">
 	import type { Snippet } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { latest } from '$lib/latest.svelte';
 
 	/**
 	 * Renders streamed load data without blocking navigation.
@@ -15,28 +16,10 @@
 		children
 	}: { promise: Promise<T> | T; skeleton: Snippet; children: Snippet<[T]> } = $props();
 
-	let value = $state<{ v: T } | null>(null);
-	let failed = $state<string | null>(null);
+	const data = latest(() => promise);
+	const value = $derived(data.value);
+	const failed = $derived(data.error);
 	let retrying = $state(false);
-
-	$effect(() => {
-		const p = promise;
-		let live = true;
-		Promise.resolve(p).then(
-			(v) => {
-				if (!live) return;
-				value = { v };
-				failed = null;
-			},
-			(e: unknown) => {
-				if (!live) return;
-				failed = (e as { message?: string })?.message ?? 'Something went wrong';
-			}
-		);
-		return () => {
-			live = false;
-		};
-	});
 
 	async function retry() {
 		retrying = true;
